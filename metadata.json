@@ -1,0 +1,5 @@
+{
+  "name": "Analyst Break Tracker",
+  "description": "A system to manage analyst breaks with password-protected resets and automatic daily clearing.",
+  "requestFramePermissions": []
+}
