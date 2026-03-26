@@ -1,0 +1,94 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: analysts
+// Document ID: analystId (UUID)
+// Fields:
+//   - id: string (required)
+//   - name: string (required)
+//   - break1: map (required)
+//     - checked: boolean
+//     - time: string
+//     - startTime: number
+//     - endTime: number
+//   - break2: map (required)
+//     - checked: boolean
+//     - time: string
+//     - startTime: number
+//     - endTime: number
+//
+// Collection: activeBreaks
+// Document ID: activeBreakId (UUID)
+// Fields:
+//   - id: string (required)
+//   - analystId: string (required)
+//   - analystName: string (required)
+//   - breakName: string (required)
+//   - startTime: number (required)
+//
+// Collection: settings
+// Document ID: global
+// Fields:
+//   - lastResetDate: string
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "clinicabiobio1@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isValidAnalyst(data) {
+      return data.keys().hasAll(['id', 'name', 'break1', 'break2']) &&
+             data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.break1 is map &&
+             data.break2 is map;
+    }
+
+    function isValidActiveBreak(data) {
+      return data.keys().hasAll(['id', 'analystId', 'analystName', 'breakName', 'startTime']) &&
+             data.id is string &&
+             data.analystId is string &&
+             data.analystName is string &&
+             data.breakName is string &&
+             data.startTime is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /analysts/{analystId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidAnalyst(request.resource.data);
+      allow update: if isAuthenticated() && isValidAnalyst(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /activeBreaks/{activeBreakId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidActiveBreak(request.resource.data);
+      allow update: if isAuthenticated() && isValidActiveBreak(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /settings/global {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+  }
+}

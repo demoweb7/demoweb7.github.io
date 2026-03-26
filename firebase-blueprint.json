@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "Analyst": {
+      "title": "Analyst",
+      "description": "An analyst with their break status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "break1": {
+          "type": "object",
+          "properties": {
+            "checked": { "type": "boolean" },
+            "time": { "type": "string" },
+            "startTime": { "type": "number" },
+            "endTime": { "type": "number" }
+          }
+        },
+        "break2": {
+          "type": "object",
+          "properties": {
+            "checked": { "type": "boolean" },
+            "time": { "type": "string" },
+            "startTime": { "type": "number" },
+            "endTime": { "type": "number" }
+          }
+        }
+      },
+      "required": ["id", "name", "break1", "break2"]
+    },
+    "ActiveBreak": {
+      "title": "ActiveBreak",
+      "description": "A break that is currently active in the monitor",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "analystId": { "type": "string" },
+        "analystName": { "type": "string" },
+        "breakName": { "type": "string" },
+        "startTime": { "type": "number" }
+      },
+      "required": ["id", "analystId", "analystName", "breakName", "startTime"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application settings",
+      "type": "object",
+      "properties": {
+        "lastResetDate": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/analysts/{analystId}": {
+      "schema": "Analyst",
+      "description": "Collection of analysts"
+    },
+    "/activeBreaks/{activeBreakId}": {
+      "schema": "ActiveBreak",
+      "description": "Collection of currently active breaks"
+    },
+    "/settings/global": {
+      "schema": "Settings",
+      "description": "Global settings document"
+    }
+  }
+}

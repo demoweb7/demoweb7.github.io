@@ -12,26 +12,42 @@ import {
   CheckCircle2,
   X,
   Activity,
-  LogOut
+  LogOut,
+  LogIn
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { Analyst, ActiveBreak, ADMIN_PASSWORD } from "./types";
+import { 
+  db, 
+  auth, 
+  login, 
+  logout, 
+  handleFirestoreError, 
+  OperationType 
+} from "./firebase";
+import { 
+  collection, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  updateDoc,
+  getDoc,
+  writeBatch
+} from "firebase/firestore";
+import { onAuthStateChanged, User } from "firebase/auth";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export default function App() {
-  const [analysts, setAnalysts] = useState<Analyst[]>(() => {
-    const saved = localStorage.getItem("analysts");
-    return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [activeBreaks, setActiveBreaks] = useState<ActiveBreak[]>(() => {
-    const saved = localStorage.getItem("activeBreaks");
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [analysts, setAnalysts] = useState<Analyst[]>([]);
+  const [activeBreaks, setActiveBreaks] = useState<ActiveBreak[]>([]);
+  const [lastResetDate, setLastResetDate] = useState<string>("");
 
   const [newAnalystName, setNewAnalystName] = useState("");
   const [password, setPassword] = useState("");
@@ -42,77 +58,145 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Firestore Listeners
+  useEffect(() => {
+    if (!isAuthReady || !user) return;
+
+    const unsubAnalysts = onSnapshot(collection(db, "analysts"), (snapshot) => {
+      const data = snapshot.docs.map(doc => doc.data() as Analyst);
+      setAnalysts(data);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "analysts"));
+
+    const unsubActiveBreaks = onSnapshot(collection(db, "activeBreaks"), (snapshot) => {
+      const data = snapshot.docs.map(doc => doc.data() as ActiveBreak);
+      setActiveBreaks(data);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "activeBreaks"));
+
+    const unsubSettings = onSnapshot(doc(db, "settings", "global"), (snapshot) => {
+      if (snapshot.exists()) {
+        setLastResetDate(snapshot.data().lastResetDate);
+      } else {
+        // Seed initial reset date
+        const today = new Date().toDateString();
+        setDoc(doc(db, "settings", "global"), { lastResetDate: today })
+          .catch(err => handleFirestoreError(err, OperationType.WRITE, "settings/global-seed"));
+      }
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "settings/global"));
+
+    return () => {
+      unsubAnalysts();
+      unsubActiveBreaks();
+      unsubSettings();
+    };
+  }, [isAuthReady, user]);
+
   // Update current time every 10 seconds for monitor
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(Date.now()), 10000);
     return () => clearInterval(timer);
   }, []);
 
-  // Persistence
-  useEffect(() => {
-    localStorage.setItem("analysts", JSON.stringify(analysts));
-  }, [analysts]);
-
-  useEffect(() => {
-    localStorage.setItem("activeBreaks", JSON.stringify(activeBreaks));
-  }, [activeBreaks]);
-
   // Automatic Daily Reset at 00:00
-  const checkDailyReset = useCallback(() => {
-    const lastReset = localStorage.getItem("lastResetDate");
+  const checkDailyReset = useCallback(async () => {
+    if (!isAuthReady || !user || !lastResetDate) return;
+    
     const today = new Date().toDateString();
 
-    if (lastReset !== today) {
-      setAnalysts(prev => prev.map(a => ({
-        ...a,
-        break1: { checked: false, startTime: undefined, endTime: undefined },
-        break2: { checked: false, startTime: undefined, endTime: undefined }
-      })));
-      setActiveBreaks([]); // Clear monitor on daily reset
-      localStorage.setItem("lastResetDate", today);
-      console.log("Daily reset performed at:", new Date().toLocaleTimeString());
+    if (lastResetDate !== today) {
+      try {
+        const batch = writeBatch(db);
+        
+        // Reset analysts
+        analysts.forEach(a => {
+          const ref = doc(db, "analysts", a.id);
+          batch.update(ref, {
+            break1: { checked: false, startTime: null, endTime: null },
+            break2: { checked: false, startTime: null, endTime: null }
+          });
+        });
+
+        // Clear active breaks
+        activeBreaks.forEach(ab => {
+          const ref = doc(db, "activeBreaks", ab.id);
+          batch.delete(ref);
+        });
+
+        // Update reset date
+        const settingsRef = doc(db, "settings", "global");
+        batch.set(settingsRef, { lastResetDate: today });
+
+        await batch.commit();
+        console.log("Daily reset performed at:", new Date().toLocaleTimeString());
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, "daily-reset");
+      }
     }
-  }, []);
+  }, [isAuthReady, user, lastResetDate, analysts, activeBreaks]);
 
   useEffect(() => {
-    checkDailyReset();
-    const interval = setInterval(checkDailyReset, 60000); // Check every minute
-    return () => clearInterval(interval);
-  }, [checkDailyReset]);
+    if (lastResetDate) {
+      checkDailyReset();
+    }
+  }, [lastResetDate, checkDailyReset]);
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (password !== ADMIN_PASSWORD) {
       setError("Clave incorrecta");
       return;
     }
 
-    if (showPasswordModal?.type === "add") {
-      if (!newAnalystName.trim()) return;
-      const newAnalyst: Analyst = {
-        id: crypto.randomUUID(),
-        name: newAnalystName,
-        break1: { checked: false },
-        break2: { checked: false }
-      };
-      setAnalysts(prev => [...prev, newAnalyst]);
-      setNewAnalystName("");
-    } else if (showPasswordModal?.type === "remove" && showPasswordModal.id) {
-      setAnalysts(prev => prev.filter(a => a.id !== showPasswordModal.id));
-      setActiveBreaks(prev => prev.filter(ab => ab.analystId !== showPasswordModal.id));
-    } else if (showPasswordModal?.type === "reset" && showPasswordModal.id) {
-      setAnalysts(prev => prev.map(a => 
-        a.id === showPasswordModal.id 
-          ? { ...a, break1: { checked: false, startTime: undefined, endTime: undefined }, break2: { checked: false, startTime: undefined, endTime: undefined } } 
-          : a
-      ));
-      setActiveBreaks(prev => prev.filter(ab => ab.analystId !== showPasswordModal.id));
-    } else if (showPasswordModal?.type === "resetAll") {
-      setAnalysts(prev => prev.map(a => ({
-        ...a,
-        break1: { checked: false, startTime: undefined, endTime: undefined },
-        break2: { checked: false, startTime: undefined, endTime: undefined }
-      })));
-      setActiveBreaks([]);
+    try {
+      if (showPasswordModal?.type === "add") {
+        if (!newAnalystName.trim()) return;
+        const id = crypto.randomUUID();
+        const newAnalyst: Analyst = {
+          id,
+          name: newAnalystName,
+          break1: { checked: false },
+          break2: { checked: false }
+        };
+        await setDoc(doc(db, "analysts", id), newAnalyst);
+        setNewAnalystName("");
+      } else if (showPasswordModal?.type === "remove" && showPasswordModal.id) {
+        await deleteDoc(doc(db, "analysts", showPasswordModal.id));
+        // Also remove from active breaks
+        const absToRemove = activeBreaks.filter(ab => ab.analystId === showPasswordModal.id);
+        for (const ab of absToRemove) {
+          await deleteDoc(doc(db, "activeBreaks", ab.id));
+        }
+      } else if (showPasswordModal?.type === "reset" && showPasswordModal.id) {
+        await updateDoc(doc(db, "analysts", showPasswordModal.id), {
+          break1: { checked: false, startTime: null, endTime: null },
+          break2: { checked: false, startTime: null, endTime: null }
+        });
+        const absToRemove = activeBreaks.filter(ab => ab.analystId === showPasswordModal.id);
+        for (const ab of absToRemove) {
+          await deleteDoc(doc(db, "activeBreaks", ab.id));
+        }
+      } else if (showPasswordModal?.type === "resetAll") {
+        const batch = writeBatch(db);
+        analysts.forEach(a => {
+          batch.update(doc(db, "analysts", a.id), {
+            break1: { checked: false, startTime: null, endTime: null },
+            break2: { checked: false, startTime: null, endTime: null }
+          });
+        });
+        activeBreaks.forEach(ab => {
+          batch.delete(doc(db, "activeBreaks", ab.id));
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "admin-action");
     }
 
     closeModal();
@@ -124,7 +208,7 @@ export default function App() {
     setError(null);
   };
 
-  const toggleBreak = (id: string, breakNum: 1 | 2) => {
+  const toggleBreak = async (id: string, breakNum: 1 | 2) => {
     const analyst = analysts.find(a => a.id === id);
     if (!analyst) return;
 
@@ -135,48 +219,80 @@ export default function App() {
     const startTime = Date.now();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    setAnalysts(prev => prev.map(a => {
-      if (a.id === id) {
-        return {
-          ...a,
-          [breakKey]: {
-            checked: true,
-            time: timeStr,
-            startTime: startTime
-          }
-        };
-      }
-      return a;
-    }));
+    try {
+      await updateDoc(doc(db, "analysts", id), {
+        [breakKey]: {
+          checked: true,
+          time: timeStr,
+          startTime: startTime
+        }
+      });
 
-    // Add to monitor
-    const newActiveBreak: ActiveBreak = {
-      id: crypto.randomUUID(),
-      analystId: id,
-      analystName: analyst.name,
-      breakName: `Break ${breakNum}`,
-      startTime: startTime
-    };
-    setActiveBreaks(prev => [...prev, newActiveBreak]);
+      const abId = crypto.randomUUID();
+      const newActiveBreak: ActiveBreak = {
+        id: abId,
+        analystId: id,
+        analystName: analyst.name,
+        breakName: `Break ${breakNum}`,
+        startTime: startTime
+      };
+      await setDoc(doc(db, "activeBreaks", abId), newActiveBreak);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "toggle-break");
+    }
   };
 
-  const finishBreak = (activeBreakId: string) => {
+  const finishBreak = async (activeBreakId: string) => {
     const ab = activeBreaks.find(b => b.id === activeBreakId);
     if (ab) {
       const now = Date.now();
-      setAnalysts(prev => prev.map(a => {
-        if (a.id === ab.analystId) {
-          if (ab.breakName === "Break 1") {
-            return { ...a, break1: { ...a.break1, endTime: now } };
-          } else if (ab.breakName === "Break 2") {
-            return { ...a, break2: { ...a.break2, endTime: now } };
-          }
+      try {
+        const breakKey = ab.breakName === "Break 1" ? "break1" : "break2";
+        const analyst = analysts.find(a => a.id === ab.analystId);
+        if (analyst) {
+          await updateDoc(doc(db, "analysts", ab.analystId), {
+            [`${breakKey}.endTime`]: now
+          });
         }
-        return a;
-      }));
+        await deleteDoc(doc(db, "activeBreaks", activeBreakId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, "finish-break");
+      }
     }
-    setActiveBreaks(prev => prev.filter(ab => ab.id !== activeBreakId));
   };
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center space-y-6"
+        >
+          <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+            <ShieldCheck size={40} />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-800">Acceso Restringido</h1>
+          <p className="text-slate-500">Inicia sesión con tu cuenta de Google para acceder al sistema de control.</p>
+          <button
+            onClick={login}
+            className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-lg hover:shadow-blue-200"
+          >
+            <LogIn size={20} />
+            Iniciar Sesión con Google
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans p-4 md:p-8">
@@ -191,7 +307,18 @@ export default function App() {
             <p className="text-slate-500 mt-1">Gestión de descansos y turnos diarios</p>
           </div>
           
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-600">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              {user.email}
+            </div>
+            <button
+              onClick={logout}
+              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Cerrar Sesión"
+            >
+              <LogOut size={20} />
+            </button>
             <button
               onClick={() => setShowPasswordModal({ type: "resetAll" })}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium shadow-sm"
