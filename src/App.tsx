@@ -183,7 +183,7 @@ export default function App() {
 
   // Sync loggedInUser with latest data from analysts
   useEffect(() => {
-    if (loggedInUser) {
+    if (loggedInUser && !loadingAnalysts) {
       const updatedUser = analysts.find(a => a.id === loggedInUser.id);
       if (updatedUser) {
         if (JSON.stringify(updatedUser) !== JSON.stringify(loggedInUser)) {
@@ -191,11 +191,11 @@ export default function App() {
           localStorage.setItem("loggedInUser", JSON.stringify(updatedUser));
         }
       } else {
-        // User was deleted
+        // User was deleted or doesn't exist in the current list
         handleLogout();
       }
     }
-  }, [analysts, loggedInUser]);
+  }, [analysts, loggedInUser, loadingAnalysts]);
 
   const handleAction = async () => {
     if (password !== ADMIN_PASSWORD) {
