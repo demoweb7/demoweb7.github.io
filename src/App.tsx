@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, 
@@ -46,8 +46,19 @@ export default function App() {
   const [analysts, setAnalysts] = useState<Analyst[]>([]);
   const [activeBreaks, setActiveBreaks] = useState<ActiveBreak[]>([]);
   const [lastResetDate, setLastResetDate] = useState<string>("");
+  const [loggedInUser, setLoggedInUser] = useState<Analyst | null>(() => {
+    const saved = localStorage.getItem("loggedInUser");
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loadingAnalysts, setLoadingAnalysts] = useState(true);
 
   const [newAnalystName, setNewAnalystName] = useState("");
+  const [newAnalystUsername, setNewAnalystUsername] = useState("");
+  const [newAnalystPassword, setNewAnalystPassword] = useState("");
   const [password, setPassword] = useState("");
   const [showPasswordModal, setShowPasswordModal] = useState<{
     type: "add" | "remove" | "reset" | "resetAll";
@@ -61,6 +72,24 @@ export default function App() {
     const unsubAnalysts = onSnapshot(collection(db, "analysts"), (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data() as Analyst);
       setAnalysts(data);
+      setLoadingAnalysts(false);
+
+      // Seed initial admin if no admin exists
+      const hasAdmin = data.some(a => a.role === "admin");
+      if (!hasAdmin) {
+        const adminId = crypto.randomUUID();
+        const initialAdmin: Analyst = {
+          id: adminId,
+          name: "Administrador",
+          username: "admin",
+          password: "password123",
+          role: "admin",
+          break1: { checked: false },
+          break2: { checked: false }
+        };
+        setDoc(doc(db, "analysts", adminId), initialAdmin)
+          .catch(err => handleFirestoreError(err, OperationType.WRITE, "analysts/seed"));
+      }
     }, (err) => handleFirestoreError(err, OperationType.LIST, "analysts"));
 
     const unsubActiveBreaks = onSnapshot(collection(db, "activeBreaks"), (snapshot) => {
@@ -135,6 +164,39 @@ export default function App() {
     }
   }, [lastResetDate, checkDailyReset]);
 
+  const handleLogin = (e: FormEvent) => {
+    e.preventDefault();
+    const user = analysts.find(a => a.username === loginUsername && a.password === loginPassword);
+    if (user) {
+      setLoggedInUser(user);
+      localStorage.setItem("loggedInUser", JSON.stringify(user));
+      setLoginError(null);
+    } else {
+      setLoginError("Usuario o contraseña incorrectos");
+    }
+  };
+
+  const handleLogout = () => {
+    setLoggedInUser(null);
+    localStorage.removeItem("loggedInUser");
+  };
+
+  // Sync loggedInUser with latest data from analysts
+  useEffect(() => {
+    if (loggedInUser) {
+      const updatedUser = analysts.find(a => a.id === loggedInUser.id);
+      if (updatedUser) {
+        if (JSON.stringify(updatedUser) !== JSON.stringify(loggedInUser)) {
+          setLoggedInUser(updatedUser);
+          localStorage.setItem("loggedInUser", JSON.stringify(updatedUser));
+        }
+      } else {
+        // User was deleted
+        handleLogout();
+      }
+    }
+  }, [analysts, loggedInUser]);
+
   const handleAction = async () => {
     if (password !== ADMIN_PASSWORD) {
       setError("Clave incorrecta");
@@ -143,16 +205,21 @@ export default function App() {
 
     try {
       if (showPasswordModal?.type === "add") {
-        if (!newAnalystName.trim()) return;
+        if (!newAnalystName.trim() || !newAnalystUsername.trim() || !newAnalystPassword.trim()) return;
         const id = crypto.randomUUID();
         const newAnalyst: Analyst = {
           id,
           name: newAnalystName,
+          username: newAnalystUsername,
+          password: newAnalystPassword,
+          role: "analyst",
           break1: { checked: false },
           break2: { checked: false }
         };
         await setDoc(doc(db, "analysts", id), newAnalyst);
         setNewAnalystName("");
+        setNewAnalystUsername("");
+        setNewAnalystPassword("");
       } else if (showPasswordModal?.type === "remove" && showPasswordModal.id) {
         await deleteDoc(doc(db, "analysts", showPasswordModal.id));
         // Also remove from active breaks
@@ -248,10 +315,79 @@ export default function App() {
     }
   };
 
+  const filteredAnalysts = useMemo(() => {
+    if (!loggedInUser) return [];
+    if (loggedInUser.role === "admin") return analysts;
+    return analysts.filter(a => a.id === loggedInUser.id);
+  }, [analysts, loggedInUser]);
+
   if (!lastResetDate) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (!loggedInUser) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full space-y-6"
+        >
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <ShieldCheck size={32} />
+            </div>
+            <h1 className="text-2xl font-bold text-slate-800">Acceso al Sistema</h1>
+            <p className="text-slate-500 text-sm">Ingresa tus credenciales para continuar</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Usuario</label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                placeholder="Nombre de usuario"
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Contraseña</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+            {loginError && (
+              <p className="text-red-500 text-xs flex items-center gap-1">
+                <AlertCircle size={12} />
+                {loginError}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={loadingAnalysts}
+              className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loadingAnalysts ? "Cargando..." : "Ingresar"}
+            </button>
+          </form>
+          {analysts.length > 0 && !analysts.some(a => a.role === 'admin') && (
+            <p className="text-[10px] text-center text-slate-400">
+              Sincronizando base de datos... por favor espera.
+            </p>
+          )}
+        </motion.div>
       </div>
     );
   }
@@ -261,29 +397,52 @@ export default function App() {
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
-              <Users className="text-blue-600" size={32} />
-              Control de Analistas
-            </h1>
-            <p className="text-slate-500 mt-1">Gestión de descansos y turnos diarios</p>
+          <div className="flex items-center justify-between w-full md:w-auto">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+                <Users className="text-blue-600" size={32} />
+                Control de Analistas
+              </h1>
+              <p className="text-slate-500 mt-1">Gestión de descansos y turnos diarios</p>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="md:hidden p-2 text-slate-400 hover:text-red-600 transition-colors"
+            >
+              <LogOut size={20} />
+            </button>
           </div>
           
           <div className="flex items-center gap-3">
+            <div className="hidden md:flex flex-col items-end">
+              <span className="text-sm font-bold text-slate-700">{loggedInUser.name}</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">{loggedInUser.role}</span>
+            </div>
             <button
-              onClick={() => setShowPasswordModal({ type: "resetAll" })}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium shadow-sm"
+              onClick={handleLogout}
+              className="hidden md:flex items-center gap-2 px-3 py-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all text-sm font-medium"
             >
-              <RotateCcw size={16} className="text-slate-500" />
-              Resetear Todo
+              <LogOut size={18} />
+              Salir
             </button>
-            <button
-              onClick={() => setShowPasswordModal({ type: "add" })}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-sm"
-            >
-              <UserPlus size={16} />
-              Agregar Analista
-            </button>
+            {loggedInUser.role === "admin" && (
+              <>
+                <button
+                  onClick={() => setShowPasswordModal({ type: "resetAll" })}
+                  className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium shadow-sm"
+                >
+                  <RotateCcw size={16} className="text-slate-500" />
+                  Resetear Todo
+                </button>
+                <button
+                  onClick={() => setShowPasswordModal({ type: "add" })}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-sm"
+                >
+                  <UserPlus size={16} />
+                  Agregar Analista
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -292,11 +451,13 @@ export default function App() {
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <Users size={20} className="text-slate-400" />
-              <h2 className="font-semibold text-slate-700">Lista de Analistas</h2>
+              <h2 className="font-semibold text-slate-700">
+                {loggedInUser.role === "admin" ? "Lista de Analistas" : "Mi Cuenta"}
+              </h2>
             </div>
             
             <AnimatePresence mode="popLayout">
-              {analysts.map((analyst) => (
+              {filteredAnalysts.map((analyst) => (
                 <motion.div
                   key={analyst.id}
                   layout
@@ -414,20 +575,24 @@ export default function App() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowPasswordModal({ type: "reset", id: analyst.id })}
-                      title="Resetear analista"
-                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    >
-                      <RotateCcw size={18} />
-                    </button>
-                    <button
-                      onClick={() => setShowPasswordModal({ type: "remove", id: analyst.id })}
-                      title="Eliminar analista"
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
+                    {loggedInUser.role === "admin" && (
+                      <>
+                        <button
+                          onClick={() => setShowPasswordModal({ type: "reset", id: analyst.id })}
+                          title="Resetear analista"
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          <RotateCcw size={18} />
+                        </button>
+                        <button
+                          onClick={() => setShowPasswordModal({ type: "remove", id: analyst.id })}
+                          title="Eliminar analista"
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </motion.div>
               ))}
@@ -485,18 +650,20 @@ export default function App() {
                           <span className="text-xs opacity-80">{ab.breakName} • {elapsedMins}m</span>
                         </div>
                         
-                        <button
-                          onClick={() => finishBreak(ab.id)}
-                          className={cn(
-                            "flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition-all",
-                            isOverLimit
-                              ? "bg-red-600 text-white hover:bg-red-700"
-                              : "bg-green-600 text-white hover:bg-green-700"
-                          )}
-                        >
-                          <LogOut size={12} />
-                          Fin Break
-                        </button>
+                        {(loggedInUser.role === "admin" || loggedInUser.id === ab.analystId) && (
+                          <button
+                            onClick={() => finishBreak(ab.id)}
+                            className={cn(
+                              "flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition-all",
+                              isOverLimit
+                                ? "bg-red-600 text-white hover:bg-red-700"
+                                : "bg-green-600 text-white hover:bg-green-700"
+                            )}
+                          >
+                            <LogOut size={12} />
+                            Fin Break
+                          </button>
+                        )}
                       </motion.div>
                     );
                   })}
@@ -539,17 +706,39 @@ export default function App() {
 
                 <div className="space-y-4">
                   {showPasswordModal.type === "add" && (
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-700">Nombre del Analista</label>
-                      <input
-                        autoFocus
-                        type="text"
-                        value={newAnalystName}
-                        onChange={(e) => setNewAnalystName(e.target.value)}
-                        placeholder="Ej: David Muñoz"
-                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                      />
-                    </div>
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Nombre Completo</label>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={newAnalystName}
+                          onChange={(e) => setNewAnalystName(e.target.value)}
+                          placeholder="Ej: David Muñoz"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Usuario de Acceso</label>
+                        <input
+                          type="text"
+                          value={newAnalystUsername}
+                          onChange={(e) => setNewAnalystUsername(e.target.value)}
+                          placeholder="Ej: dmunoz"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Contraseña</label>
+                        <input
+                          type="password"
+                          value={newAnalystPassword}
+                          onChange={(e) => setNewAnalystPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                    </>
                   )}
 
                   <div className="space-y-2">
@@ -597,6 +786,7 @@ export default function App() {
       {/* Footer Info */}
       <footer className="max-w-6xl mx-auto mt-12 pt-8 border-t border-slate-200 text-center text-slate-400 text-sm">
         <p>© 2026 Sistema de Control de Analistas. Las casillas se reinician automáticamente a las 00:00.</p>
+        <p>for DEMO</p>
       </footer>
     </div>
   );

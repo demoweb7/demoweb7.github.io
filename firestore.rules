@@ -7,6 +7,9 @@
 // Fields:
 //   - id: string (required)
 //   - name: string (required)
+//   - username: string (required)
+//   - password: string (required)
+//   - role: string (required, enum: admin, analyst)
 //   - break1: map (required)
 //     - checked: boolean
 //     - time: string
@@ -52,9 +55,12 @@ service cloud.firestore {
     }
 
     function isValidAnalyst(data) {
-      return data.keys().hasAll(['id', 'name', 'break1', 'break2']) &&
+      return data.keys().hasAll(['id', 'name', 'username', 'password', 'role', 'break1', 'break2']) &&
              data.id is string &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.username is string && data.username.size() > 0 &&
+             data.password is string && data.password.size() > 0 &&
+             data.role in ['admin', 'analyst'] &&
              data.break1 is map &&
              data.break2 is map;
     }

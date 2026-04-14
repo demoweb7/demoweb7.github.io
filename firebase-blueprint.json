@@ -2,11 +2,14 @@
   "entities": {
     "Analyst": {
       "title": "Analyst",
-      "description": "An analyst with their break status",
+      "description": "An analyst with their break status and credentials",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "analyst"] },
         "break1": {
           "type": "object",
           "properties": {
@@ -26,7 +29,7 @@
           }
         }
       },
-      "required": ["id", "name", "break1", "break2"]
+      "required": ["id", "name", "username", "password", "role", "break1", "break2"]
     },
     "ActiveBreak": {
       "title": "ActiveBreak",

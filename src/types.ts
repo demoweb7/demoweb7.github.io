@@ -8,6 +8,9 @@ export interface Break {
 export interface Analyst {
   id: string;
   name: string;
+  username: string;
+  password: string;
+  role: 'admin' | 'analyst';
   break1: Break;
   break2: Break;
 }
