@@ -43,8 +43,6 @@ function cn(...inputs: ClassValue[]) {
 }
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
   const [analysts, setAnalysts] = useState<Analyst[]>([]);
   const [activeBreaks, setActiveBreaks] = useState<ActiveBreak[]>([]);
   const [lastResetDate, setLastResetDate] = useState<string>("");
@@ -58,19 +56,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
-  // Auth Listener
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setIsAuthReady(true);
-    });
-    return () => unsubscribe();
-  }, []);
-
   // Firestore Listeners
   useEffect(() => {
-    if (!isAuthReady || !user) return;
-
     const unsubAnalysts = onSnapshot(collection(db, "analysts"), (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data() as Analyst);
       setAnalysts(data);
@@ -97,7 +84,7 @@ export default function App() {
       unsubActiveBreaks();
       unsubSettings();
     };
-  }, [isAuthReady, user]);
+  }, []);
 
   // Update current time every 10 seconds for monitor
   useEffect(() => {
@@ -107,7 +94,7 @@ export default function App() {
 
   // Automatic Daily Reset at 00:00
   const checkDailyReset = useCallback(async () => {
-    if (!isAuthReady || !user || !lastResetDate) return;
+    if (!lastResetDate) return;
     
     const today = new Date().toDateString();
 
@@ -140,7 +127,7 @@ export default function App() {
         handleFirestoreError(err, OperationType.WRITE, "daily-reset");
       }
     }
-  }, [isAuthReady, user, lastResetDate, analysts, activeBreaks]);
+  }, [lastResetDate, analysts, activeBreaks]);
 
   useEffect(() => {
     if (lastResetDate) {
@@ -261,35 +248,10 @@ export default function App() {
     }
   };
 
-  if (!isAuthReady) {
+  if (!lastResetDate) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center space-y-6"
-        >
-          <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto">
-            <ShieldCheck size={40} />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800">Acceso Restringido</h1>
-          <p className="text-slate-500">Inicia sesión con tu cuenta de Google para acceder al sistema de control.</p>
-          <button
-            onClick={login}
-            className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-lg hover:shadow-blue-200"
-          >
-            <LogIn size={20} />
-            Iniciar Sesión con Google
-          </button>
-        </motion.div>
       </div>
     );
   }
@@ -308,17 +270,6 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-600">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              {user.email}
-            </div>
-            <button
-              onClick={logout}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-              title="Cerrar Sesión"
-            >
-              <LogOut size={20} />
-            </button>
             <button
               onClick={() => setShowPasswordModal({ type: "resetAll" })}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium shadow-sm"

@@ -73,22 +73,15 @@ service cloud.firestore {
     // ===============================================================
 
     match /analysts/{analystId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidAnalyst(request.resource.data);
-      allow update: if isAuthenticated() && isValidAnalyst(request.resource.data);
-      allow delete: if isAuthenticated();
+      allow read, write: if true;
     }
 
     match /activeBreaks/{activeBreakId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidActiveBreak(request.resource.data);
-      allow update: if isAuthenticated() && isValidActiveBreak(request.resource.data);
-      allow delete: if isAuthenticated();
+      allow read, write: if true;
     }
 
     match /settings/global {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read, write: if true;
     }
   }
 }
