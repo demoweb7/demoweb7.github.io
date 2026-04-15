@@ -13,7 +13,8 @@ import {
   X,
   Activity,
   LogOut,
-  LogIn
+  LogIn,
+  Key
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -60,8 +61,10 @@ export default function App() {
   const [newAnalystUsername, setNewAnalystUsername] = useState("");
   const [newAnalystPassword, setNewAnalystPassword] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPasswordModal, setShowPasswordModal] = useState<{
-    type: "add" | "remove" | "reset" | "resetAll";
+    type: "add" | "remove" | "reset" | "resetAll" | "changePassword" | "adminResetPassword";
     id?: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -198,13 +201,33 @@ export default function App() {
   }, [analysts, loggedInUser, loadingAnalysts]);
 
   const handleAction = async () => {
-    if (password !== ADMIN_PASSWORD) {
+    // Admin password check for admin actions
+    const isAdminAction = ["add", "remove", "reset", "resetAll", "adminResetPassword"].includes(showPasswordModal?.type || "");
+    if (isAdminAction && password !== ADMIN_PASSWORD) {
       setError("Clave incorrecta");
       return;
     }
 
     try {
-      if (showPasswordModal?.type === "add") {
+      if (showPasswordModal?.type === "changePassword") {
+        if (!newPassword || newPassword !== confirmPassword) {
+          setError(newPassword !== confirmPassword ? "Las contraseñas no coinciden" : "Ingrese una contraseña válida");
+          return;
+        }
+        if (loggedInUser) {
+          await updateDoc(doc(db, "analysts", loggedInUser.id), {
+            password: newPassword
+          });
+        }
+      } else if (showPasswordModal?.type === "adminResetPassword" && showPasswordModal.id) {
+        if (!newPassword) {
+          setError("Ingrese una nueva contraseña");
+          return;
+        }
+        await updateDoc(doc(db, "analysts", showPasswordModal.id), {
+          password: newPassword
+        });
+      } else if (showPasswordModal?.type === "add") {
         if (!newAnalystName.trim() || !newAnalystUsername.trim() || !newAnalystPassword.trim()) return;
         const id = crypto.randomUUID();
         const newAnalyst: Analyst = {
@@ -259,6 +282,8 @@ export default function App() {
   const closeModal = () => {
     setShowPasswordModal(null);
     setPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
     setError(null);
   };
 
@@ -425,6 +450,13 @@ export default function App() {
               <LogOut size={18} />
               Salir
             </button>
+            <button
+              onClick={() => setShowPasswordModal({ type: "changePassword" })}
+              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              title="Cambiar mi contraseña"
+            >
+              <Key size={20} />
+            </button>
             {loggedInUser.role === "admin" && (
               <>
                 <button
@@ -578,6 +610,13 @@ export default function App() {
                     {loggedInUser.role === "admin" && (
                       <>
                         <button
+                          onClick={() => setShowPasswordModal({ type: "adminResetPassword", id: analyst.id })}
+                          title="Restablecer contraseña"
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          <Key size={18} />
+                        </button>
+                        <button
                           onClick={() => setShowPasswordModal({ type: "reset", id: analyst.id })}
                           title="Resetear analista"
                           className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -592,6 +631,15 @@ export default function App() {
                           <Trash2 size={18} />
                         </button>
                       </>
+                    )}
+                    {loggedInUser.role === "analyst" && loggedInUser.id === analyst.id && (
+                      <button
+                        onClick={() => setShowPasswordModal({ type: "changePassword" })}
+                        title="Cambiar mi contraseña"
+                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Key size={18} />
+                      </button>
                     )}
                   </div>
                 </motion.div>
@@ -705,6 +753,46 @@ export default function App() {
                 </div>
 
                 <div className="space-y-4">
+                  {showPasswordModal.type === "changePassword" && (
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Nueva Contraseña</label>
+                        <input
+                          autoFocus
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">Confirmar Contraseña</label>
+                        <input
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {showPasswordModal.type === "adminResetPassword" && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">Nueva Contraseña para el Analista</label>
+                      <input
+                        autoFocus
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  )}
+
                   {showPasswordModal.type === "add" && (
                     <>
                       <div className="space-y-2">
@@ -741,26 +829,35 @@ export default function App() {
                     </>
                   )}
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Clave de Administrador</label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAction()}
-                      placeholder="Ingrese Clave Admin"
-                      className={cn(
-                        "w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none",
-                        error ? "border-red-500" : "border-slate-200"
+                  {["add", "remove", "reset", "resetAll", "adminResetPassword"].includes(showPasswordModal.type) && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">Clave de Administrador</label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAction()}
+                        placeholder="Ingrese Clave Admin"
+                        className={cn(
+                          "w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none",
+                          error ? "border-red-500" : "border-slate-200"
+                        )}
+                      />
+                      {error && (
+                        <p className="text-red-500 text-xs flex items-center gap-1">
+                          <AlertCircle size={12} />
+                          {error}
+                        </p>
                       )}
-                    />
-                    {error && (
-                      <p className="text-red-500 text-xs flex items-center gap-1">
-                        <AlertCircle size={12} />
-                        {error}
-                      </p>
-                    )}
-                  </div>
+                    </div>
+                  )}
+
+                  {showPasswordModal.type === "changePassword" && error && (
+                    <p className="text-red-500 text-xs flex items-center gap-1">
+                      <AlertCircle size={12} />
+                      {error}
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-8 flex gap-3">
